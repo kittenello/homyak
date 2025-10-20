@@ -64,3 +64,10 @@ async def reset_all_cooldowns():
     async with aiosqlite.connect(db_path) as db:
         await db.execute("DELETE FROM cooldowns")
         await db.commit()
+
+async def reset_user_cooldown(user_id: int):
+    """Сбрасывает кулдаун пользователя"""
+    db_path = str(COOLDOWN_DB_PATH)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM cooldowns WHERE user_id = ?", (user_id,))
+        await db.commit()

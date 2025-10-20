@@ -80,16 +80,12 @@ async def get_all_cards_in_chat(chat_id: int):
     """Возвращает всех участников чата с количеством их карт (даже если 0)."""
     from bot.main import bot
     try:
-        # Получаем всех участников чата
         members = []
         offset = 0
         while True:
             chunk = await bot.get_chat_administrators(chat_id) if offset == 0 else []
-            # Для обычных участников используем get_chat_members (ограничено)
-            # Но Telegram не даёт полный список — поэтому делаем иначе:
-            break  # ← временно
+            break
 
-        # АЛЬТЕРНАТИВА: получаем только тех, кто есть в user_cards + активных
         db_path = str(CARDS_DB_PATH)
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute("""
@@ -120,3 +116,10 @@ async def get_all_cards_in_chat(chat_id: int):
     except Exception as e:
         print(f"Ошибка получения участников: {e}")
         return []
+    
+async def reset_user_cards(user_id: int):
+    """Сбрасывает коллекцию пользователя"""
+    db_path = str(CARDS_DB_PATH)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM user_cards WHERE user_id = ?", (user_id,))
+        await db.commit()

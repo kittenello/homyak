@@ -86,13 +86,8 @@ async def get_score(user_id: int) -> tuple[int, str | None]:
 
 
 async def get_top_scores_in_chat(bot: Bot, chat_id: int, limit: int = 10):
-    """
-    Топ по ГЛОБАЛЬНЫМ очкам пользователей (user_scores), отфильтрованный по фактическому членству в chat_id.
-    Т.е. берём самые большие total_score из user_scores и показываем только тех, кто сейчас в этом чате.
-    """
     db_path = str(SCORES_DB_PATH)
 
-    # Берём "с запасом", чтобы после фильтрации по членству набрать limit.
     oversample = max(limit * 5, 100)
 
     async with aiosqlite.connect(db_path) as db:
@@ -131,11 +126,9 @@ async def get_top_cards_in_chat(bot: Bot, chat_id: int, limit: int = 10):
     """
     db_path = str(CARDS_DB_PATH)
 
-    # Аналогично — берём с запасом, затем фильтруем по членству.
     oversample = max(limit * 5, 100)
 
     async with aiosqlite.connect(db_path) as db:
-        # user_cards: ожидается, что там записи вида (user_id, ...), по ним считаем COUNT(*)
         cursor = await db.execute("""
             SELECT user_id, COUNT(*) AS card_count
             FROM user_cards
@@ -195,3 +188,10 @@ async def get_all_user_ids_with_scores():
     async with aiosqlite.connect(db_path) as db:
         cursor = await db.execute("SELECT user_id FROM user_scores")
         return [row[0] for row in await cursor.fetchall()]
+
+async def reset_user_scores(user_id: int):
+    """Сбрасывает очки пользователя"""
+    db_path = str(SCORES_DB_PATH)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM user_scores WHERE user_id = ?", (user_id,))
+        await db.commit()

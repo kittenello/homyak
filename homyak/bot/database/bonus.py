@@ -36,3 +36,9 @@ async def get_bonus(user_id: int) -> dict | None:
                 "is_premium_at_activation": row[1] == 1
             }
         return None
+    
+async def remove_bonus(user_id: int):
+    db_path = str(BONUS_DB_PATH)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM bonuses WHERE user_id = ?", (user_id,))
+        await db.commit()
