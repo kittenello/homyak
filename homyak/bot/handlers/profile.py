@@ -1,7 +1,9 @@
-from aiogram import Router, F
-from aiogram.types import Message
+from html import escape
+from datetime import datetime
+from aiogram import Router
 from aiogram.filters import Command
-from datetime import timedelta, datetime
+from aiogram.types import Message
+
 from ..database.premium import get_premium
 from ..database.scores import get_score
 from ..database.cards import get_user_cards, get_total_cards_count
@@ -9,35 +11,76 @@ from ..database.admins import is_admin
 
 router = Router()
 
+
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
     user = message.from_user
     user_id = user.id
 
-    total_score, last_homyak = await get_score(user_id)
-    total_score = total_score or 0
-    name = user.first_name or "Error to get name"
-    user_cards = await get_user_cards(user_id)
-    total_cards = await get_total_cards_count()
-    opened_cards = len(user_cards)
+    # 🛡 Экранируем имя для HTML parse_mode
+    raw_name = user.full_name or user.first_name or "Без имени"
+    name = escape(raw_name)
 
-    admin_status = " Administrator" if await is_admin(user_id) else ""
-
-    premium_info = await get_premium(user_id)
+    # --- Premium ---
     premium_text = ""
-    if premium_info:
-        if premium_info["is_lifetime"]:
-            premium_text = "\n👑 Premium: Навсегда"
-        elif premium_info["expires_at"]:
-            expires_date = datetime.fromisoformat(premium_info["expires_at"]).strftime("%d.%m.%Y")
-            premium_text = f"\n👑 Premium до: {expires_date}"
+    premium = await get_premium(user_id)
+    if premium:
+        if premium.get("is_lifetime"):
+            premium_text = "\n👑 Premium: навсегда"
+        elif premium.get("expires_at"):
+            try:
+                expires_date = datetime.fromisoformat(premium["expires_at"]).strftime("%d.%m.%Y")
+                premium_text = f"\n👑 Premium до: {escape(expires_date)}"
+            except Exception:
+                pass
 
-    photos = await message.bot.get_user_profile_photos(user_id, limit=1)
+    # --- Очки и последний хомяк ---
+    total_score = 0
+    last_homyak = None
+    try:
+        result = await get_score(user_id)
+        if isinstance(result, (tuple, list)) and len(result) >= 2:
+            total_score, last_homyak = result
+        elif isinstance(result, dict):
+            total_score = result.get("total_score", 0)
+            last_homyak = result.get("last_homyak")
+    except Exception:
+        pass
+
+    total_score = total_score or 0
+    last_homyak_text = escape(last_homyak) if last_homyak else "ещё не было"
+
+    # --- Карточки ---
+    try:
+        user_cards = await get_user_cards(user_id)
+        opened_cards = len(user_cards)
+    except Exception:
+        opened_cards = 0
+
+    try:
+        total_cards = await get_total_cards_count()
+    except Exception:
+        total_cards = 0
+
+    # --- Админ ---
+    admin_status = ""
+    try:
+        if await is_admin(user_id):
+            admin_status = "🔧 <i>Вы администратор</i>"
+    except Exception:
+        pass
+
+    # --- Получаем аватар пользователя ---
     photo_file_id = None
-    if photos.photos:
-        photo_file_id = photos.photos[0][-1].file_id
+    try:
+        photos = await message.bot.get_user_profile_photos(user_id, limit=1)
+        if photos.photos:
+            # Берём последнее (самое большое) фото
+            photo_file_id = photos.photos[0][-1].file_id
+    except Exception:
+        pass
 
-    last_homyak_text = last_homyak if last_homyak else "ещё не было"
+    # --- Формируем текст профиля ---
     text = (
         f"👋 Привет, {name}!{premium_text}\n\n"
         f"✨ Очки: {total_score:,}\n"
@@ -47,6 +90,7 @@ async def cmd_profile(message: Message):
         f"{admin_status}"
     )
 
+    # --- Отправляем сообщение ---
     if photo_file_id:
         await message.answer_photo(photo=photo_file_id, caption=text)
     else:

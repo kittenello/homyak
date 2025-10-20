@@ -93,7 +93,7 @@ async def handle_homyak(message: Message):
     if is_new_card:
         await add_card(user_id, filename)
 
-    await add_score(user_id, points, homyak_name)
+    await add_score(user_id, points, homyak_name, chat_id=message.chat.id)
     total_score, _ = await get_score(user_id)
 
     caption_lines = [
@@ -151,7 +151,7 @@ async def send_homyak_by_name(message: Message, homyak_name: str):
     if is_new_card:
         await add_card(user_id, filename)
 
-    await add_score(user_id, points, homyak_name)
+    await add_score(user_id, points, homyak_name, chat_id=message.chat.id)
     total_score, _ = await get_score(user_id)
 
 

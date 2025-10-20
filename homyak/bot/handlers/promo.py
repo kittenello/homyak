@@ -41,7 +41,8 @@ async def cmd_promo(message: Message):
 
     if promo["reward_type"] == 1: 
         points = int(promo["reward_value"])
-        await add_score(user_id, points)
+        chat_id = message.chat.id if message.chat else None
+        await add_score(user_id, points, chat_id=chat_id)
         result_text = f"✅ Получено {points:,} очков!"
     elif promo["reward_type"] == 2:
         from .homyak import send_homyak_by_name

@@ -6,7 +6,6 @@ from aiogram.filters import Command
 from pathlib import Path
 from ..database.admins import is_admin
 import re
-from ..database.promo import create_promo, promo_exists
 
 router = Router()
 
@@ -32,6 +31,9 @@ async def process_code(message: Message, state: FSMContext):
     code = message.text.strip()
     if not code:
         await message.answer("❌ Промокод не может быть пустым.")
+        return
+    if not re.match(r'^[a-zA-Z0-9а-яА-Я_]+$', code):
+        await message.answer("❌ Промокод может содержать только буквы, цифры и подчеркивания.")
         return
     await state.update_data(promo_code=code)
     await message.answer(
@@ -207,12 +209,10 @@ async def process_max_uses(message: Message, state: FSMContext):
     except ValueError:
         failed_attempts += 1
         await state.update_data(failed_attempts=failed_attempts)
-
         if failed_attempts >= 3:
             await state.clear()
             await message.answer("❌ Три неудачные попытки. Пожалуйста, начните процесс заново.")
             return
-
         await message.answer("❌ Введите положительное число.")
         return
 
@@ -222,7 +222,7 @@ async def process_max_uses(message: Message, state: FSMContext):
     duration = data.get("duration", 0)
 
     from ..database.promo import create_promo
-    await create_promo(
+    success = await create_promo(
         code=data["promo_code"],
         creator_id=message.from_user.id,
         reward_type=reward_type,
@@ -231,5 +231,8 @@ async def process_max_uses(message: Message, state: FSMContext):
         max_uses=max_uses
     )
 
-    await message.answer(f"✅ Промокод «{data['promo_code']}» создан!")
+    if success:
+        await message.answer(f"✅ Промокод «{data['promo_code']}» создан!")
+    else:
+        await message.answer(f"❌ Не удалось создать промокод «{data['promo_code']}». Возможно, такой промокод уже существует.")
     await state.clear()
