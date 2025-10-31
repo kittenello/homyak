@@ -9,6 +9,7 @@ from ..database.admins import is_admin
 from ..config import ADMIN_CHAT_ID
 import tempfile
 
+
 router = Router()
 
 _bot_instance: Bot | None = None
@@ -20,7 +21,6 @@ def set_bot_instance(bot: Bot):
     _bot_instance = bot
 
 async def backup_loop():
-    """Цикл отправки бэкапов каждые 30 минут"""
     while _is_backup_enabled:
         try:
             if _bot_instance:

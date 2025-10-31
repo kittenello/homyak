@@ -6,8 +6,14 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from ..database.premium import set_premium
 from ..config import ADMIN_CHAT_ID, CRYPTO_BOT_TOKEN
-from bot.services.cryptobot import CryptoBotService
-from bot.services import crypto_service
+from aiogram.methods import RefundStarPayment
+from ..database.money import add_money
+from ..database.elixir import add_elixir
+from ..database.cards import add_card
+from ..database.shoph import get_item
+from ..database.shopbuyers import has_bought, record_purchase
+from ..services.cryptobot import CryptoBotService
+from ..services import crypto_service
 from ..database.premium import get_premium
 import logging
 
@@ -77,8 +83,9 @@ async def cmd_premium(message: Message):
             [InlineKeyboardButton(text="Перейти в бота", url=bot_link)]
         ])
         await message.answer(
-            "❌ Эта команда доступна только в личных сообщениях с ботом. ",
-            reply_markup=keyboard
+            "❌ Эта команда доступна только в личных сообщениях с ботом.",
+            reply_markup=keyboard,
+            reply_to_message_id=message.message_id
         )
         return
 
@@ -177,42 +184,144 @@ async def on_successful_payment(message: Message):
     payment = message.successful_payment
     user_id = message.from_user.id
 
-    payload_parts = payment.invoice_payload.split("|")
-    if len(payload_parts) != 3 or payload_parts[0] != "premium":
-        await message.answer("❌ Неизвестный платеж.")
+    # Обработка премиум подписки
+    if "|" in payment.invoice_payload:
+        payload_parts = payment.invoice_payload.split("|")
+        if len(payload_parts) != 3 or payload_parts[0] != "premium":
+            await message.answer("❌ Неизвестный платеж.")
+            return
+
+        plan = payload_parts[1]
+        buyer_id = int(payload_parts[2])
+        if buyer_id != user_id:
+            await message.answer("❌ Платёж не ваш.")
+            return
+
+        display_name = format_display_name(plan)
+        if plan == "lifetime":
+            await set_premium(user_id, is_lifetime=True)
+        elif plan == "1_year":
+            await set_premium(user_id, days=365)
+        else:
+            months = int(plan.split("_")[0])
+            await set_premium(user_id, days=months * 30)
+
+        await message.answer(f"✅ Вам выдан Premium на {display_name}!\nСпасибо за поддержку!")
+        
+        username = f"@{message.from_user.username}" if message.from_user.username else f"ID {user_id}"
+        full_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip() or "Без имени"
+        text = (
+            f"✅ Оплата произведена \n"
+            f"Покупатель: {full_name} ({username})\n"
+            f"ID: {buyer_id}\n"
+            f"Покупка: Premium {display_name}\n"
+            f"Стоимость: {payment.total_amount}\n"
+            f"ID операции: {payment.telegram_payment_charge_id}"
+        )
+        try:
+            await message.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, message_thread_id=5029)
+        except Exception as e:
+            logger.error(f"cant send log 194 premium: {e}")
         return
 
-    plan = payload_parts[1]
-    buyer_id = int(payload_parts[2])
-    if buyer_id != user_id:
-        await message.answer("❌ Платёж не ваш.")
+    # Обработка платежей магазина
+    payload = payment.invoice_payload
+
+    if payload.startswith("topup:"):
+        # Пополнение монет
+        amount = int(payload.split(":", 1)[1])
+        await add_money(user_id, amount)
+        await message.answer(f"✅ Успешно начислено {amount} монет!")
+        
+        username = f"@{message.from_user.username}" if message.from_user.username else f"ID {user_id}"
+        text = (
+            f"💰 Покупка монет\n"
+            f"Покупатель: {username}\n"
+            f"Количество: {amount} монет\n"
+            f"ID операции: {payment.telegram_payment_charge_id}"
+        )
+        await message.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, message_thread_id=5029)
         return
 
-    display_name = format_display_name(plan)
-    if plan == "lifetime":
-        await set_premium(user_id, is_lifetime=True)
-    elif plan == "1_year":
-        await set_premium(user_id, days=365)
-    else:
-        months = int(plan.split("_")[0])
-        await set_premium(user_id, days=months * 30)
+    if payload.startswith("boost:"):
+        # Покупка бустера
+        boost_type = payload.split(":", 1)[1]
+        await add_elixir(user_id, boost_type)
+        name = "удачи" if boost_type == "luck" else "ускорения времени"
+        await message.answer(f"✅ Бустер {name} успешно добавлен в инвентарь!")
 
-    await message.answer(f"✅ Вам выдан Premium на {display_name}!\nСпасибо за поддержку!")
-    
-    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {user_id}"
-    full_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip() or "Без имени"
-    text = (
-        f"✅ Оплата произведена \n"
-        f"Покупатель: {full_name} ({username})\n"
-        f"ID: {buyer_id}\n"
-        f"Покупка: Premium {display_name}\n"
-        f"Стоимость: {payment.total_amount}\n"
-        f"ID операции: {payment.telegram_payment_charge_id}"
-    )
-    try:
-        await message.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, message_thread_id=102)
-    except Exception as e:
-        logger.error(f"cant send log 194 premium: {e}")
+        username = f"@{message.from_user.username}" if message.from_user.username else f"ID {user_id}"
+        text = (
+            f"🎲 Покупка бустера\n"
+            f"Покупатель: {username}\n"
+            f"Тип: {name}\n"
+            f"ID операции: {payment.telegram_payment_charge_id}"
+        )
+        await message.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, message_thread_id=5029)
+        return
+
+    if payload.startswith("cardbuy:"):
+        item_id = int(payload.split(":", 1)[1])
+        item = await get_item(item_id)
+        if not item:
+            await message.answer("❌ Товар не найден.")
+            return
+
+        user_id = message.from_user.id
+
+        if await has_bought(user_id, item_id):
+            try:
+                await message.bot(
+                    RefundStarPayment(
+                        user_id=user_id,
+                        telegram_payment_charge_id=payment.telegram_payment_charge_id
+                    )
+                )
+                await message.answer(f"❌ У вас уже есть хомяк «{item['name']}».\n⭐ Звёзды возвращены, хомяк и награды за него не были выданы.")
+            except Exception as e:
+                await message.answer(f"⚠ Ошибка возврата звёзд: {e}")
+            return
+
+        ok = await reduce_stock(item_id)
+        if not ok:
+            await message.answer("❌ Этот хомяк закончился.")
+            return
+
+        await add_card(user_id, item["filename"])
+        original_rarity = await get_rarity(item["filename"])
+        points = RARITY_POINTS[original_rarity]
+
+        if await is_premium_active(user_id):
+            points += 1000
+
+        bonus_info = await get_bonus(user_id)
+        if bonus_info and bonus_info.get("is_active"):
+            points += 700 if (bonus_info.get("is_premium_at_activation") or await is_premium_active(user_id)) else 500
+
+        await add_score(user_id, points, item["name"], chat_id=message.chat.id)
+        await record_purchase(user_id, item_id, item["filename"])
+        total_score, _ = await get_score(user_id)
+
+        caption = (
+            f"✅ Вы купили карточку «{item['name']}» за звёзды!\n\n"
+            f"💎 Редкость • {RARITY_NAMES[original_rarity]}\n"
+            f"✨ Очки • +{points:,} [{total_score:,}]\n"
+            f"🔁 Если карточка уже была, добавлены только очки."
+        )
+        file_path = Path(HOMYAK_FILES_DIR) / item["filename"]
+        await message.answer_photo(photo=FSInputFile(file_path), caption=caption)
+
+        username = f"@{message.from_user.username}" if message.from_user.username else f"ID {user_id}"
+        text = (
+            f"🐹 Покупка хомяка за ⭐️\n"
+            f"Покупатель: {username}\n"
+            f"Хомяк: {item['name']}\n"
+            f"ID операции: {payment.telegram_payment_charge_id}"
+        )
+        await message.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, message_thread_id=5029)
+        return
+
+    await message.answer("❌ Неизвестный платеж.")
 
 @router.callback_query(F.data.startswith("pay_cryptobot_"))
 async def pay_cryptobot_menu(callback_query: CallbackQuery):
@@ -324,14 +433,14 @@ async def check_crypto_payment(callback_query: CallbackQuery):
             amount = CRYPTO_PRICES.get(plan, 0)
 
             oplata = (
-                f"✅ CryptoBot\n\n"
+                f"✅ Оплата по CryptoBot\n\n"
                 f"👤 Покупатель: {full_name} ({username})\n"
                 f"🆔 ID: {user_id}\n"
                 f"📅 Тариф: {display_name}\n"
                 f"💰 Сумма: {amount} USDT\n"
                 f"🧾 Инвойс ID: {invoice_id}"
             )
-            await callback_query.bot.send_message(ADMIN_CHAT_ID, oplata, parse_mode="HTML")
+            await callback_query.bot.send_message(ADMIN_CHAT_ID, oplata, parse_mode="HTML", message_thread_id=5029)
             
             await callback_query.message.edit_text(f"✅ Спасибо за покупку!\nВаш Premium активирован на {display_name} месяц")
         else:

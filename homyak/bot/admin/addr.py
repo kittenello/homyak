@@ -14,11 +14,26 @@ class AddRandomRarity(StatesGroup):
     waiting_for_image = State()
     waiting_for_name = State()
     waiting_for_confirmation = State()
+async def check_callback_author(callback_query: CallbackQuery, state: FSMContext) -> bool:
+    user_id = callback_query.from_user.id
+
+    if not await is_admin(user_id):
+        await callback_query.answer("самый хитрый или че", show_alert=True)
+        return False
+
+    data = await state.get_data()
+    initiator_id = data.get("initiator_id")
+    if initiator_id is None or initiator_id != user_id:
+        await callback_query.answer("❌ Это не ваша кнопка!", show_alert=True)
+        return False
+
+    return True
 
 @router.message(Command("addr"))
 async def cmd_addr(message: Message, state: FSMContext):
-    if not await is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id) and message.from_user.id != 8142801405:
         return
+    await state.update_data(initiator_id=message.from_user.id)  # 🔑 Сохраняем ID
     await message.answer("🖼️ Отправьте изображение хомяка (любой формат):")
     await state.set_state(AddRandomRarity.waiting_for_image)
 
@@ -36,16 +51,11 @@ async def photo_received(message: Message, state: FSMContext, bot: Bot):
     await message.answer("✏️ Введите название хомяка:")
     await state.set_state(AddRandomRarity.waiting_for_name)
 
-# @router.message(AddRandomRarity.waiting_for_image)
-# async def photo_invalid(message: Message):
-#     await message.answer("❌ Пожалуйста, отправьте именно изображение.")
-
 @router.message(AddRandomRarity.waiting_for_image)
 async def photo_invalid(message: Message, state: FSMContext):
-    attempts = await state.get_data()
-    failed_attempts = attempts.get("failed_attempts", 0)
-
     if not message.photo:
+        attempts = await state.get_data()
+        failed_attempts = attempts.get("failed_attempts", 0)
         failed_attempts += 1
         await state.update_data(failed_attempts=failed_attempts)
 
@@ -88,11 +98,10 @@ async def name_received(message: Message, state: FSMContext):
         if f.name.lower() != "welcome.png":
             existing_names.append(f.stem)
 
-
     similar = []
     for name in existing_names:
         sim = similarity(homyak_name, name)
-        if sim >= 0.4:
+        if sim >= 0.6:
             similar.append((name, sim))
 
     if similar:
@@ -141,7 +150,7 @@ async def finalize_addition(message: Message, state: FSMContext, homyak_name: st
         rarity = 4
     elif rand < 0.25:
         rarity = 3
-    elif rand < 0.25:
+    elif rand < 0.50:
         rarity = 2
     else:
         rarity = 1
@@ -157,6 +166,8 @@ async def finalize_addition(message: Message, state: FSMContext, homyak_name: st
 
 @router.callback_query(F.data == "addr_confirm_yes")
 async def confirm_yes(callback_query: CallbackQuery, state: FSMContext):
+    if not await check_callback_author(callback_query, state):
+        return
     data = await state.get_data()
     homyak_name = data["homyak_name"]
     await finalize_addition(callback_query.message, state, homyak_name)
@@ -164,6 +175,8 @@ async def confirm_yes(callback_query: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "addr_confirm_no")
 async def confirm_no(callback_query: CallbackQuery, state: FSMContext):
+    if not await check_callback_author(callback_query, state):
+        return
     await callback_query.message.edit_text("❌ Добавление отменено.")
     await state.clear()
     await callback_query.answer()

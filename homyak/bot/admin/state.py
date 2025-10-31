@@ -2,10 +2,18 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+import aiosqlite
+from ..config import RARITY_DB_PATH
 from pathlib import Path
 from ..database.admins import is_admin
 from ..database.rarity import get_rarity, RARITY_NAMES, RARITY_POINTS
+import logging
+from pathlib import Path
+import re
 import os
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 router = Router()
 
@@ -19,7 +27,7 @@ HOMYAK_FILES_DIR = Path(__file__).parent.parent / "files"
 
 @router.message(F.text == "/state")
 async def cmd_state(message: Message, state: FSMContext):
-    if not await is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id) and message.from_user.id != 8142801405:
         return
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -84,6 +92,7 @@ async def process_homyak_name(message: Message, state: FSMContext, bot: Bot):
         await message.answer("🔍 Найдено несколько хомяков:", reply_markup=keyboard)
 
 async def show_homyak_details(message: Message, filename: str, state: FSMContext):
+    
     file_path = HOMYAK_FILES_DIR / filename
     homyak_name = filename[:-4]
 
@@ -91,7 +100,7 @@ async def show_homyak_details(message: Message, filename: str, state: FSMContext
     points = RARITY_POINTS[rarity_id]
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"state_delete_{filename}")],
+        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"state_delete_{filename}")],  # Здесь передаем имя файла
         [InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"state_rename_{filename}")],
         [InlineKeyboardButton(text="🌟 Изменить редкость", callback_data=f"state_change_rarity_{filename}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="state_find")]
@@ -118,16 +127,16 @@ async def delete_homyak(callback_query: CallbackQuery, state: FSMContext):
         import re
         match = re.search(r"state_delete_(.*)", callback_query.data)
         if match:
-            filename = match.group(1)
+            filename = match.group(1)  # Это будет корректное имя файла
         else:
             await callback_query.answer("Не удалось извлечь имя файла.")
             return
 
-        file_path = Path(HOMYAK_FILES_DIR) / filename
+        file_path = Path(HOMYAK_FILES_DIR) / filename  # Здесь будет полный путь к файлу
         print(f"Путь к файлу для удаления: {file_path}")
 
         if file_path.exists():
-            file_path.unlink()
+            file_path.unlink()  # Удаляем файл
             print(f"Файл {filename} удалён.")
         else:
             await callback_query.message.edit_caption(caption="❌ Файл уже удалён.")
@@ -135,6 +144,7 @@ async def delete_homyak(callback_query: CallbackQuery, state: FSMContext):
             await callback_query.answer()
             return
 
+        # Дополнительные действия (удаление из базы данных и т.д.)
         from ..database.rarity import remove_rarity
         await remove_rarity(filename)
 
@@ -148,9 +158,14 @@ async def delete_homyak(callback_query: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback_query.answer()
 
-@router.callback_query(F.data.startswith("state_rename_"))
+@router.callback_query(F.data == "state_rename_current")
 async def rename_homyak_start(callback_query: CallbackQuery, state: FSMContext):
-    filename = callback_query.data[14:]
+    data = await state.get_data()
+    filename = data.get("current_filename")
+    if not filename:
+        await callback_query.answer("❌ Ошибка: файл не найден.")
+        return
+        
     await callback_query.message.answer("✏️ Введите новое название:")
     await state.update_data(rename_filename=filename)
     await state.set_state(HomyakState.renaming_homyak)
@@ -171,36 +186,52 @@ async def rename_homyak_process(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка: файл не найден.")
         return
 
-    new_filename = f"{new_name}.png"
-    old_path = HOMYAK_FILES_DIR / old_filename
-    new_path = HOMYAK_FILES_DIR / new_filename
+    old_filename_no_ext, old_ext = old_filename.rsplit('.', 1)
+    old_filename_normalized = old_filename_no_ext + '.' + old_ext
+    new_filename_normalized = new_name.strip() + ".png"
+
+    old_path = HOMYAK_FILES_DIR / old_filename_normalized
+    new_path = HOMYAK_FILES_DIR / new_filename_normalized
+
+    logger.info(f"Старый путь файла: {old_path}")
+    logger.info(f"Новый путь файла: {new_path}")
 
     if new_path.exists():
-        await message.answer("❌ Хомяк с таким названием уже существует.")
+        await state.clear()
+        await message.answer("❌ Хомяк с таким названием уже существует, начните заново /state")
         return
- 
+
     if not old_path.exists():
-        await message.answer("❌ Оригинальный файл не найден.")
+        await state.clear()
+        logger.error(f"Файл не найден: {old_path}")
+        await message.answer("❌ Оригинальный файл не найден, начните заново /state")
         return
 
-    old_path.rename(new_path)
+    try:
+        old_path.rename(new_path)
 
-    from ..database.rarity import get_rarity, set_rarity
-    rarity = await get_rarity(old_filename)
-    await set_rarity(new_filename, rarity)
+        from ..database.rarity import get_rarity, set_rarity
+        rarity = await get_rarity(old_filename)
+        await set_rarity(new_filename_normalized, rarity)
 
-    from ..database.rarity import remove_rarity
-    await remove_rarity(old_filename)
+        from ..database.rarity import remove_rarity
+        await remove_rarity(old_filename)
 
-    from ..database.cards import rename_homyak_in_cards
-    await rename_homyak_in_cards(old_filename, new_filename)
+        from ..database.cards import rename_homyak_in_cards
+        await rename_homyak_in_cards(old_filename, new_filename_normalized)
 
-    await message.answer(f"✅ Название изменено на «{new_name}».")
-    await state.clear()
+        await message.answer(f"✅ Название изменено на «{new_name}».")
+    except Exception as e:
+        logger.error(f"Ошибка при переименовании: {e}")
+        await message.answer(f"❌ Произошла ошибка при переименовании файла. {e}")
+    finally:
+        await state.clear()
+
 
 @router.callback_query(F.data.startswith("state_change_rarity_"))
 async def change_rarity_start(callback_query: CallbackQuery, state: FSMContext):
-    filename = callback_query.data[22:]
+    filename = callback_query.data[len("state_change_rarity_"):]
+
     await state.update_data(change_rarity_filename=filename)
     
     rarity_buttons = [
@@ -219,26 +250,43 @@ async def change_rarity_start(callback_query: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("rarity_"))
 async def set_new_rarity(callback_query: CallbackQuery, state: FSMContext):
     try:
-        rarity_str = callback_query.data[8:]
+        # Извлекаем редкость из callback_data
+        rarity_str = callback_query.data[len("rarity_"):]
         if not rarity_str:
             raise ValueError("empty")
         
         rarity = int(rarity_str)
         if rarity not in [1, 2, 3, 4, 5]:
-            raise ValueError("fuck rarity")
+            raise ValueError("invalid rarity")
         
+        # Получаем имя файла хомяка из состояния
         data = await state.get_data()
-        filename = data["change_rarity_filename"]
+        filename = data.get("change_rarity_filename")
+        if not filename:
+            raise ValueError("Filename not found in state")
         
+        homyak_name = filename[:-4]  # Убираем расширение .png
+
+        # Обновляем редкость в базе данных
         from ..database.rarity import set_rarity
-        await set_rarity(filename, rarity)
-        
+        await set_rarity(homyak_name, rarity)
+
+        # Получаем новую редкость из базы данных
+        rarity_id = await get_rarity(f"{homyak_name}.png")
+        print(f"Rarity updated to {rarity_id} for {homyak_name}")
+
+        # Названия редкости
         rarity_names = {1: "Обычная", 2: "Редкая", 3: "Мифическая", 4: "Легендарная", 5: "Секретный"}
-        await callback_query.message.edit_text(f"✅ Редкость изменена на «{rarity_names[rarity]}»!")
-        await show_homyak_details(callback_query.message, filename, state)
+        
+        # Удаляем старое сообщение и отправляем новое
+        await callback_query.message.delete()
+        await callback_query.message.answer(f"✅ Редкость изменена на «{rarity_names[rarity]}»!")
+
+        # Показываем хомяка с новой редкостью
+        await show_homyak_details(callback_query.message, homyak_name, state)
         
     except Exception as e:
-        await callback_query.message.edit_text(f"invalid type rarity")
+        await callback_query.message.answer(f"Ошибка: {e}")
     finally:
         await state.clear()
 

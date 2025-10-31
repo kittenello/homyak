@@ -29,39 +29,6 @@ async def init_db():
         """)
         await db.commit()
 
-async def assign_random_rarities():
-    video_files = [
-        f.name for f in HOMYAK_FILES_DIR.glob("*.mp4")
-        if f.name.lower() != "welcome.mp4"
-    ]
-    if not video_files:
-        return
-
-    async with aiosqlite.connect(str(RARITY_DB_PATH)) as db:
-        cursor = await db.execute("SELECT filename FROM homyak_rarity")
-        assigned = {row[0] for row in await cursor.fetchall()}
-        
-        new_files = [f for f in video_files if f not in assigned]
-        if not new_files:
-            return
-
-        import random
-        for filename in new_files:
-            rand = random.random()
-            if rand < 0.02:
-                rarity = 4
-            elif rand < 0.10:
-                rarity = 3
-            elif rand < 0.30:
-                rarity = 2
-            else:
-                rarity = 1
-            await db.execute(
-                "INSERT INTO homyak_rarity (filename, rarity) VALUES (?, ?)",
-                (filename, rarity)
-            )
-        await db.commit()
-
 async def get_rarity(filename: str) -> int:
     async with aiosqlite.connect(str(RARITY_DB_PATH)) as db:
         cursor = await db.execute("SELECT rarity FROM homyak_rarity WHERE filename = ?", (filename,))
@@ -86,7 +53,7 @@ async def get_rarity_stats() -> dict[int, int]:
             GROUP BY rarity
         """)
         rows = await cursor.fetchall()
-        stats = {1: 0, 2: 0, 3: 0, 4: 0}
+        stats = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         for rarity, count in rows:
             if rarity in stats:
                 stats[rarity] = count

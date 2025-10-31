@@ -15,6 +15,16 @@ async def init_db():
         """)
         await db.commit()
 
+async def rename_homyak_in_cards(old_filename: str, new_filename: str):
+    db_path = str(CARDS_DB_PATH)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("""
+            UPDATE user_cards
+            SET filename = ?
+            WHERE filename = ?
+        """, (new_filename, old_filename))
+        await db.commit()
+
 async def add_card(user_id: int, filename: str):
     db_path = str(CARDS_DB_PATH)
     async with aiosqlite.connect(db_path) as db:

@@ -1,20 +1,22 @@
-from aiogram import Router, F, Bot
+from aiogram import Router
 from aiogram.types import Message
-from aiogram.filters import Command
-import re
+from aiogram.filters import Command, CommandObject
+from aiogram.methods import RefundStarPayment
+
 from datetime import datetime, timedelta
 from ..database.premium import remove_premium
 from ..database.admins import is_admin, is_owner, add_admin, remove_admin
-from ..database.cooldowns import get_last_used, set_last_used, set_infinite_mode
+from ..database.cooldowns import get_last_used, set_infinite_mode
 from ..database.premium import get_premium, set_premium
 from ..database.rarity import get_rarity_stats
-from ..config import HOMYAK_FILES_DIR
-import aiosqlite
-from ..config import COOLDOWN_DB_PATH, SETTINGS, HOMYAK_FILES_DIR
+from ..database.money import set_money
+from ..config import SETTINGS, HOMYAK_FILES_DIR
 
 router = Router()
 
 GLOBAL_COOLDOWN_MINUTES = 1440
+
+refunded_tx: set[str] = set()
 
 def parse_user_id(text: str) -> int | None:
     """Извлекает user_id из строки: либо число, либо @username"""
@@ -43,29 +45,75 @@ async def cmd_makeadmin(message: Message):
     await add_admin(user_id)
     await message.answer(f"✅ Пользователь {user_id} теперь админ!")
 
-@router.message(Command("refund"))
+@router.message(Command('refund'))
 async def cmd_refund(message: Message):
-    if message.from_user.id != 7869783590:
-        return
+    parts = message.text.split(maxsplit=1)
 
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("❌ Использование: /refund [ID операции]")
-        return
+    if len(parts) != 2:
+        return await message.answer('❌ Использование: /refund <transaction_id>')
 
-    tx_id = args[1].strip()
+    tx_id = parts[1].strip()
+    user_id = message.from_user.id
+
+    if tx_id in refunded_tx:
+        return await message.answer('🔄 Возврат по этому платежу уже был выполнён.')
 
     try:
-        result = await message.bot.refund_star_payment(
-            user_id=message.from_user.id,
-            telegram_payment_charge_id=tx_id
+        success: bool = await message.bot(
+            RefundStarPayment(
+                user_id=user_id,
+                telegram_payment_charge_id=tx_id
+            )
         )
-        if result:
-            await message.answer(f"✅ Возврат успешен для ID: `{tx_id}`", parse_mode="HTML")
-        else:
-            await message.answer(f"❌ Не удалось вернуть средства для ID: `{tx_id}`", parse_mode="HTML")
     except Exception as e:
-        await message.answer(f"❌ Ошибка возврата: `{e}`", parse_mode="HTML")
+        if 'CHARGE_ALREADY_REFUNDED' in str(e):
+            refunded_tx.add(tx_id)
+            return await message.answer('🔄 Возврат по этому платежу уже был выполнён.')
+        return await message.answer(f'❌ Ошибка возврата: {e}')
+
+    if success:
+        refunded_tx.add(tx_id)
+        await message.answer(f'⭐️ Возврат успешен для транзакции {tx_id}!')
+    else:
+        await message.answer(f'❌ Не удалось вернуть средства по транзакции {tx_id}')
+
+@router.message(Command("setcoins"))
+async def cmd_setcoins(message: Message, command: CommandObject):
+    if not await is_admin(message.from_user.id):
+        return
+        
+    if not command.args:
+        await message.answer("❌ Использование: /setcoins [user_id] [количество]")
+        return
+        
+    try:
+        user_id, amount = map(int, command.args.split())
+        await set_money(user_id, amount)
+        await message.answer(f"✅ Установлено {amount} монет для пользователя {user_id}")
+    except ValueError:
+        await message.answer("❌ Неверный формат. Использование: /setcoins [user_id] [количество]")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("resetcoins"))
+async def cmd_resetcoins(message: Message, command: CommandObject):
+    if not await is_admin(message.from_user.id):
+        return
+        
+    if not command.args:
+        await message.answer("❌ Использование: /resetcoins [user_id]")
+        return
+        
+    try:
+        user_id = int(command.args)
+        await set_money(user_id, 0)
+        await message.answer(f"✅ Поставил 0 монет человеку с ID {user_id}")
+    except ValueError:
+        await message.answer("❌ Неверный формат. Использование: /resetcoins [user_id]")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("panel"))
 async def cmd_panel(message: Message):
@@ -356,7 +404,8 @@ async def cmd_hstats(message: Message):
         1: "Обычная",
         2: "Редкая",
         3: "Мифическая",
-        4: "Легендарная"
+        4: "Легендарная",
+        5: "Секретный"
     }
 
     stats_text = "\n".join(

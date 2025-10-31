@@ -1,5 +1,5 @@
 from aiogram import Router
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from pathlib import Path
 from datetime import datetime
@@ -30,6 +30,18 @@ async def cmd_start(message: Message):
         from .premium import show_premium_menu
         await show_premium_menu(message)
         return
+    if payload == "shop":
+        from .shop import show_shop_menu
+        await show_shop_menu(message)
+        return
+    if payload == "inventory":
+        from .inventory import inventory_handler
+        await inventory_handler(message)
+        return
+    if payload == "profile":
+        from .profile import cmd_profile
+        await cmd_profile(message)
+        return
 
     premium_info = await get_premium(user.id)
     premium_text = ""
@@ -49,9 +61,9 @@ async def cmd_start(message: Message):
         caption = (
             "⭐️ Добро пожаловать в Homyak Адвент-Календарь!\n\n"
             "🎁 Каждый день Вас ждут любимые хомяки.\n"
-            "  └ Открывайте дни, чтобы узнать, какой вы хомяк сегодня!\n\n"
+            "  └ Открывайте хомяка, чтобы узнать, какой вы хомяк!\n\n"
             "🐹 Просто напишите «хомяк» — и откройте своего хомяка!"
             f"{premium_text}"
             f"{premium_ad}"
         )
-        await message.answer_video(video=FSInputFile(WELCOME_VIDEO_PATH), caption=caption)
+        await message.answer_video(video=FSInputFile(WELCOME_VIDEO_PATH), caption=caption, reply_to_message_id=message.message_id, parse_mode="HTML")

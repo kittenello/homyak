@@ -41,7 +41,8 @@ async def process_code(message: Message, state: FSMContext):
         "1 - Очки\n"
         "2 - Хомяк\n"
         "3 - Снятие КД\n"
-        "4 - +Очки за каждого хомяка"
+        "4 - +Очки за каждого хомяка\n"
+        "5 - Монеты"
     )
     await state.set_state(PromoCreation.waiting_for_type)
 
@@ -52,7 +53,7 @@ async def process_type(message: Message, state: FSMContext):
 
     try:
         reward_type = int(message.text.strip())
-        if reward_type not in [1, 2, 3, 4]:
+        if reward_type not in [1, 2, 3, 4, 5]:
             raise ValueError
     except ValueError:
         failed_attempts += 1
@@ -63,7 +64,7 @@ async def process_type(message: Message, state: FSMContext):
             await message.answer("❌ Три неудачные попытки. Пожалуйста, начните процесс заново.")
             return
 
-        await message.answer("❌ Введите число от 1 до 4.")
+        await message.answer("❌ Введите число от 1 до 5.")
         return
 
     await state.update_data(reward_type=reward_type)
@@ -79,6 +80,9 @@ async def process_type(message: Message, state: FSMContext):
         await state.set_state(PromoCreation.waiting_for_max_uses)
     elif reward_type == 4:
         await message.answer("✨ Сколько +очков за хомяка?")
+        await state.set_state(PromoCreation.waiting_for_value)
+    elif reward_type == 5:
+        await message.answer("💰 Сколько монет выдавать?")
         await state.set_state(PromoCreation.waiting_for_value)
 
 @router.message(PromoCreation.waiting_for_value)
@@ -133,6 +137,27 @@ async def process_value(message: Message, state: FSMContext):
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
         await message.answer("🔍 Найдено несколько хомяков:", reply_markup=keyboard)
         await state.set_state(PromoCreation.waiting_for_homyak_selection)
+
+    if reward_type == 5:
+        try:
+            amount = int(message.text.strip())
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            failed_attempts += 1
+            await state.update_data(failed_attempts=failed_attempts)
+
+            if failed_attempts >= 3:
+                await state.clear()
+                await message.answer("❌ Три неудачные попытки. Пожалуйста, начните процесс заново.")
+                return
+
+            await message.answer("❌ Введите положительное число.")
+            return
+        
+        await state.update_data(reward_value=str(amount))
+        await message.answer("🔢 Сколько активаций максимум?")
+        await state.set_state(PromoCreation.waiting_for_max_uses)
 
     elif reward_type == 4:
         attempts = await state.get_data()

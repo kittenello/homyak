@@ -5,6 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.exceptions import TelegramBadRequest
 
 from ..database.scores import get_top_scores_in_chat, get_top_cards_in_chat
+from ..database.money import get_top_money_in_chat
 
 router = Router()
 
@@ -14,6 +15,7 @@ def build_top_keyboard() -> InlineKeyboardMarkup:
     kb = [
         [InlineKeyboardButton(text="🏆 Топ по очкам", callback_data="top:points")],
         [InlineKeyboardButton(text="🃏 Топ по карточкам", callback_data="top:cards")],
+        [InlineKeyboardButton(text="💰 Топ по монетам", callback_data="top:money")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -67,18 +69,19 @@ async def safe_edit(message, *, text: str, reply_markup: InlineKeyboardMarkup | 
         else:
             raise
 
-@router.message(F.text.lower().startswith(("топ", "топ беседы")))
+@router.message(F.text.lower().in_({"топ", "топ беседы"}))
 @router.message(Command("top"))
 async def cmd_top(message: Message):
     if message.chat.type == "private":
-        await message.answer("🏆 Команда доступна только в групповых чатах.")
+        await message.answer("🏆 Команда доступна только в групповых чатах.", reply_to_message_id=message.message_id)
         return
     
     response = await message.answer(
         "🏆 Топ 10 игроков этой группы\n"
         "<blockquote>Выберите по какому значению показать топ</blockquote>",
         reply_markup=build_top_keyboard(),
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
     )
     message_data[response.message_id] = {"original_user_id": message.from_user.id}
 
@@ -108,6 +111,14 @@ async def cb_top_handler(callback: CallbackQuery):
         await safe_edit(callback.message, text=text, reply_markup=build_back_keyboard())
         await callback.answer("🃏 Топ по карточкам")
     
+    elif callback.data == "top:money":
+        chat = callback.message.chat
+        rows = await get_top_money_in_chat(callback.bot, chat.id, limit=10)
+        user_id = callback.from_user.id 
+        text = render_top(rows, "монет", "Топ 10 игроков по монетам в этой группе", "💰", user_id)
+        await safe_edit(callback.message, text=text, reply_markup=build_back_keyboard())
+        await callback.answer("💰 Топ по монетам")
+
     elif callback.data == "top:back":
         await callback.message.edit_text(
             "🏆 Топ 10 игроков этой группы\n"
@@ -116,3 +127,5 @@ async def cb_top_handler(callback: CallbackQuery):
             parse_mode="HTML"
         )
         await callback.answer("🔙 Назад")
+
+    

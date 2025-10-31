@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, FSInputFile
 from datetime import datetime, timedelta
 import random
+import re
 from pathlib import Path
 from ..config import SETTINGS
 from ..database.cooldowns import get_last_used, set_last_used, is_infinite
@@ -10,19 +11,22 @@ from ..database.rarity import get_rarity, RARITY_NAMES, RARITY_POINTS
 from ..database.scores import add_score, get_score
 from ..database.bonus import get_bonus
 from ..database.premium import is_premium_active
-from ..database.cards import add_card, get_user_cards, get_total_cards_count
+from ..database.money import add_money, get_money
+from ..database.cards import add_card, get_user_cards
 from ..admin_logs.logger import notify_homyak_found
 
 router = Router()
 HOMYAK_FILES_DIR = Path(__file__).parent.parent / "files"
 
-triggers = {"хомяк", "хома", "хомя", "хомячок", "хомяччело", "гамяк", "гомяк", "хамяк", "хомячелло"}
+triggers = {"хомяк", "хома", "хомя", "хомячок", "хомяччело", "гамяк", "гомячок", "гомяк", "хамяк", "хомячелло"}
 
 @router.message(F.text)
 async def handle_homyak(message: Message):
     text = message.text.strip().lower()
-    if text not in triggers:
+    pattern = r"^(" + "|".join(map(re.escape, triggers)) + r")$"
+    if not re.match(pattern, text):
         return
+    pass
 
     user = message.from_user
     user_id = user.id
@@ -49,10 +53,11 @@ async def handle_homyak(message: Message):
             if datetime.now() < cooldown_end:
                 remaining = cooldown_end - datetime.now()
                 hours, remainder = divmod(remaining.seconds, 3600)
-                minutes = remainder // 60
+                minutes, seconds = divmod(remainder, 60)
                 await message.answer(
                     f"⏳ Вы уже открывали хомяка сегодня!\n"
-                    f"Следующий хомяк через: {hours}ч {minutes}мин"
+                    f"Следующий хомяк через: {hours}ч {minutes}мин {seconds}с",
+                    reply_to_message_id=message.message_id
                 )
                 return
 
@@ -64,11 +69,13 @@ async def handle_homyak(message: Message):
     non_secret_files = []
     for f in image_files:
         rarity = await get_rarity(f.name)
-        if rarity != 5: # <<< секретная
+        if rarity != 5:  # <<< секретная
             non_secret_files.append(f)
 
+    image_files = non_secret_files 
+
     if not image_files:
-        await message.answer("test teest")
+        await message.answer("Случилась очень редкая ошибка, за этой ошибки свяжитесь с @CEOTrapHouse", reply_to_message_id=message.message_id)
         return
 
     chosen = random.choice(image_files)
@@ -84,6 +91,9 @@ async def handle_homyak(message: Message):
     if bonus_info and bonus_info["is_active"]:
         points += 700 if (bonus_info["is_premium_at_activation"] or is_premium) else 500
 
+    coins_awarded = random.randint(3, 11)
+    await add_money(user_id, coins_awarded)
+
     if base_cooldown != 0 and not (await is_admin(user_id) and await is_infinite(user_id)):
         await set_last_used(user_id)
 
@@ -95,12 +105,14 @@ async def handle_homyak(message: Message):
 
     await add_score(user_id, points, homyak_name, chat_id=message.chat.id)
     total_score, _ = await get_score(user_id)
+    total_money = await get_money(user_id)
 
     caption_lines = [
         f"🪄 Вы нашли карточку «{homyak_name}»",
         "",
         f"💎 Редкость • {RARITY_NAMES[display_rarity]}",
-        f"✨ Очки • +{points:,} [{total_score:,}]"
+        f"✨ Очки • +{points:,} [{total_score:,}]",
+        f"🪙 Монеты • +{coins_awarded} [{total_money}]"
     ]
 
     if not is_new_card:
@@ -146,6 +158,9 @@ async def send_homyak_by_name(message: Message, homyak_name: str):
     if bonus_info and bonus_info["is_active"]:
         points += 700 if (bonus_info["is_premium_at_activation"] or is_premium) else 500
 
+    coins_awarded = random.randint(3, 11)
+    await add_money(user_id, coins_awarded)
+
     user_cards = await get_user_cards(user_id)
     is_new_card = filename not in user_cards
     if is_new_card:
@@ -153,13 +168,14 @@ async def send_homyak_by_name(message: Message, homyak_name: str):
 
     await add_score(user_id, points, homyak_name, chat_id=message.chat.id)
     total_score, _ = await get_score(user_id)
-
+    total_money = await get_money(user_id)
 
     caption_lines = [
         f"🪄 С помощью промокода вы получили карточку «{homyak_name}»!",
         "",
         f"💎 Редкость • {RARITY_NAMES[display_rarity]}",
         f"✨ Очки • +{points:,} [{total_score:,}]"
+        f"🪙 Монеты • +{coins_awarded} [{total_money}]"
     ]
 
     if not is_new_card:

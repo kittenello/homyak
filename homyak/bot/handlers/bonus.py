@@ -1,9 +1,9 @@
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
+from aiogram.handlers import ChatMemberHandler
 from aiogram.filters import Command
-from ..database.bonus import set_bonus, get_bonus
-from ..config import BONUS_CHANNEL_ID
+from ..database.bonus import set_bonus, get_bonus, remove_bonus
+from ..config import BONUS_CHANNEL_ID, CHANNEL_ID_BONUS
 from ..database.premium import is_premium_active
 from ..config import ADMIN_CHAT_ID
 import logging
@@ -22,7 +22,8 @@ async def cmd_bonus(message: Message):
         ])
         await message.answer(
             "❌ Эта команда работает только в личных сообщениях с ботом.",
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            reply_to_message_id=message.message_id
         )
         return
 
@@ -87,3 +88,53 @@ async def check_bonus(callback_query):
     except Exception as e:
         logger.error(f"check error sub: {e}")
         await callback_query.answer("❌ Ошибка проверки подписки", show_alert=True)
+
+@router.chat_member()
+@router.my_chat_member()
+class HandleUserLeave(ChatMemberHandler):
+    async def handle(self) -> None:
+        event: ChatMemberUpdated = self.event
+        user_id = event.from_user.id
+        
+        logger.info(f"{event.from_user.id} новое {event.new_chat_member.status}")
+        
+        logger.info(f"{event.chat.id} {CHANNEL_ID_BONUS}")
+
+        if event.chat.id == CHANNEL_ID_BONUS:
+            if event.new_chat_member.status == "left":
+
+                bonus_info = await get_bonus(user_id)
+                if bonus_info and bonus_info.get("is_active"):
+
+                    try:
+                        await remove_bonus(user_id)
+                    except Exception as e:
+                        logger.error(f"ошибка 113 bonus.py {e}")
+                        subscribe_url = "https://t.me/homyakadventcl"
+                        markup_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="Подписаться", url=subscribe_url)],
+                    ])
+                    try:
+                        await self.event.bot.send_message(
+                            user_id,
+                            "❌ Проблема!\n\n😭 Вы вышли из канала, и поэтому ваши бонусы были полностью отключены.\n🤔 Но если хотите их вернуть - подпишитесь заново на канал и не отписывайтесь.",
+                            reply_markup=markup_keyboard
+                        )
+                    except Exception as e:
+                        logger.error(f"error to send message userid {e}")
+
+            full_name = f"{event.from_user.first_name or ''} {event.from_user.last_name or ''}".strip() or "Без имени"
+            username = f"@{event.from_user.username}" if event.from_user.username else f"ID {user_id}"
+            bonus_info = await get_bonus(user_id)
+            if bonus_info and bonus_info.get("is_active"):
+                log_leave = (
+                    f"🎁 Отключение бонуса\n"
+                    f"👤 Пользователь: {full_name} ({username})\n"
+                    f"🆔 ID: {user_id}\n"
+                    f"📢 Канал: {CHANNEL_ID_BONUS}\n"
+                    f"❌ Причина: отписка от канала (@homyakadventcl)"
+                )
+                try:
+                    await self.event.bot.send_message(ADMIN_CHAT_ID, log_leave, parse_mode="HTML")
+                except Exception as e:
+                    logger.error(f"error {e}")
