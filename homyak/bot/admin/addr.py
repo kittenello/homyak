@@ -34,7 +34,7 @@ async def cmd_addr(message: Message, state: FSMContext):
     if not await is_admin(message.from_user.id) and message.from_user.id != 8142801405:
         return
     await state.update_data(initiator_id=message.from_user.id)  # 🔑 Сохраняем ID
-    await message.answer("🖼️ Отправьте изображение хомяка (любой формат):")
+    await message.answer("🖼️ якиями Отправьте изображение хомяка (любой формат):")
     await state.set_state(AddRandomRarity.waiting_for_image)
 
 @router.message(AddRandomRarity.waiting_for_image, F.photo)
